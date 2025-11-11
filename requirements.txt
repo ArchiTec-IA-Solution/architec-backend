@@ -1,0 +1,9 @@
+# Backend principal
+Flask
+flask-cors
+pandas
+reportlab
+
+# Integração com IA (ZhipuAI + ZAI SDK)
+zhipuai
+zai-sdk
