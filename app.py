@@ -1,14 +1,11 @@
 from flask import Flask, request, jsonify, send_file, render_template, send_from_directory
 from flask_cors import CORS
-from zhipuai import ZhipuAI
+from zai import ZhipuAiClient
 import pandas as pd
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
-from reportlab.lib.colors import HexColor, black, white, Color
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
+from reportlab.lib.colors import HexColor
 import io
 import os
 import json
@@ -19,17 +16,12 @@ import uuid
 # --- CONFIGURAÇÃO ---
 app = Flask(__name__)
 CORS(app)
-EXCEL_FILE = 'orcamento.xlsx'
+EXCEL_FILE = r'C:\Users\a2016825\ML\Archi\back\orca.xlsx'
 GLM_API_KEY = "8bcf0c8788844f5083a78b457316f74e.RLXYMfd70rneG1Vq"
-LOGO_PATH = 'logoBoa.png'
-
-COR_CINZA_CLARO = HexColor('#F0F0F0') 
-COR_SEGUNDARIA = HexColor("#6B6A6A") 
-COR_TEXTO = HexColor('#333333')
 
 # Inicializar cliente Zhipu AI
 try:
-    client = ZhipuAI(api_key=GLM_API_KEY)
+    client = ZhipuAiClient(api_key=GLM_API_KEY)
     print(" Cliente Zhipu AI inicializado com sucesso!")
 except Exception as e:
     print(f" Erro ao inicializar cliente Zhipu AI: {e}")
@@ -37,12 +29,12 @@ except Exception as e:
 
 # --- CONSTANTES ---
 COLUNAS_ESPERADAS = {
-    'descricao': ['descrição', 'descricao', 'produto', 'item', 'nome', 'description', 'product'],
+    'descricao': ['descrição', 'descricao',  'item', 'nome', 'description'],
     'dimensao': ['dimensão', 'dimensao', 'tamanho', 'medida', 'size', 'dimension'],
     'valor': ['valor final', 'valor', 'preço', 'preco', 'custo', 'price', 'cost']
 }
 
-# Estados da conversa
+# Estados da conversa (REVERTIDO)
 ESTADOS = {
     'INICIO': 'INICIO',
     'MULTIPLAS_OPCOES': 'MULTIPLAS_OPCOES',
@@ -70,6 +62,7 @@ class Produto:
             return f"R$ {self.valor:.2f}"
         return f"R$ {self.valor}" if self.valor else "Valor não informado"
 
+# Classe Conversa (REVERTIDA)
 class Conversa:
     def __init__(self):
         self.estado = ESTADOS['INICIO']
@@ -226,124 +219,114 @@ def analisar_falha_busca(termo_busca):
         return f"Erro na análise: {e}"
     
 def extrair_produtos_manualmente(mensagem):
-    """Extração manual de múltiplos produtos como fallback"""
+    """Extração manual """
+    
+    print(f"🔧 EXTRAÇÃO MANUAL - Iniciando")
+    print(f"📝 Mensagem: '{mensagem}'")
+    
     produtos_extraidos = []
     
-    print(f" Iniciando extração manual de: '{mensagem}'")
+    # Estratégia 1: Divisão por vírgulas (mais confiável)
+    if ',' in mensagem:
+        print("   📍 Estratégia 1: Divisão por vírgulas")
+        partes = [p.strip() for p in mensagem.split(',') if p.strip()]
+        print(f"   Partes encontradas: {partes}")
+    else:
+        # Estratégia 2: Divisão por "e"
+        print("   📍 Estratégia 2: Divisão por 'e'")
+        partes = re.split(r'\b\s+e\s+\b', mensagem, flags=re.IGNORECASE)
+        partes = [p.strip() for p in partes if p.strip()]
+        print(f"   Partes encontradas: {partes}")
     
-    # Divide a mensagem em partes usando múltiplos separadores
-    separadores = [
-        r',\s*',  # Vírgula seguida de espaços
-        r'\s+e\s+',  # " e " entre palavras
-        r'\s+e mais\s+',
-        r'\s+também\s+',
-        r'\s+além de\s+',
-        r'\s+e\s+',  # Segundo "e" para garantir
+    # Padrões otimizados para cada parte
+    padroes = [
+        (r'^(\d+)\s+(.+)$', 'numero_inicio'),
+        (r'^(.+?)\s+(\d+)$', 'numero_fim'),
+        (r'^(?:quero|preciso|gostaria|precisaria|quero\s+um|preciso\s+um)\s+(\d+)\s+(.+)$', 'quero_numero_produto'),
+        (r'^(?:quero|preciso|gostaria|precisaria|quero\s+um|preciso\s+um)\s+(.+?)\s+(\d+)$', 'quero_produto_numero'),
+        (r'^(.+)$', 'apenas_produto'),
     ]
     
-    partes = [mensagem]
-    
-    for sep in separadores:
-        novas_partes = []
-        for parte in partes:
-            dividido = re.split(sep, parte, flags=re.IGNORECASE)
-            novas_partes.extend(dividido)
-        partes = [p.strip() for p in novas_partes if p.strip()]
-    
-    print(f" Partes detectadas: {partes}")
-    
-    # Padrões para identificar produtos e quantidades
-    padroes_produto = [
-        # Padrão: quantidade + produto
-        r'^(\d+)\s+(.+)$',
-        # Padrão: produto + quantidade
-        r'^(.+?)\s+(\d+)$',
-        # Padrão: "quero/preciso" + quantidade + produto
-        r'^(?:quero|preciso|gostaria|precisaria)\s+(\d+)\s+(.+)$',
-        # Padrão: "quero/preciso" + produto + quantidade
-        r'^(?:quero|preciso|gostaria|precisaria)\s+(.+?)\s+(\d+)$',
-    ]
-    
-    for parte in partes:
-        print(f" Analisando parte: '{parte}'")
+    for i, parte in enumerate(partes):
+        print(f"\n   📦 Processando parte {i+1}: '{parte}'")
         
         produto_encontrado = None
         quantidade_encontrada = 1
         
-        # Tenta cada padrão
-        for padrao in padroes_produto:
+        for padrao, tipo_padrao in padroes:
             match = re.match(padrao, parte.strip(), re.IGNORECASE)
             if match:
                 grupos = match.groups()
+                print(f"      ✅ Padrão '{tipo_padrao}' encontrado: {grupos}")
                 
-                if len(grupos) == 2:
-                    # Determina qual grupo é quantidade e qual é produto
-                    if grupos[0].isdigit():
-                        quantidade_encontrada = int(grupos[0])
-                        produto_encontrado = grupos[1].strip()
-                    else:
-                        produto_encontrado = grupos[0].strip()
-                        quantidade_encontrada = int(grupos[1])
-                    
-                    print(f" Padrão encontrado: '{produto_encontrado}' - Qtd: {quantidade_encontrada}")
-                    break
+                if tipo_padrao == 'numero_inicio':
+                    quantidade_encontrada = int(grupos[0])
+                    produto_encontrado = grupos[1].strip()
+                elif tipo_padrao == 'numero_fim':
+                    produto_encontrado = grupos[0].strip()
+                    quantidade_encontrada = int(grupos[1])
+                elif tipo_padrao == 'quero_numero_produto':
+                    quantidade_encontrada = int(grupos[0])
+                    produto_encontrado = grupos[1].strip()
+                elif tipo_padrao == 'quero_produto_numero':
+                    produto_encontrado = grupos[0].strip()
+                    quantidade_encontrada = int(grupos[1])
+                elif tipo_padrao == 'apenas_produto':
+                    produto_encontrado = grupos[0].strip()
+                    numeros_meio = re.findall(r'\b(\d+)\b', produto_encontrado)
+                    if numeros_meio:
+                        quantidade_encontrada = int(numeros_meio[0])
+                        produto_encontrado = re.sub(r'\b\d+\b', '', produto_encontrado).strip()
+                
+                break
         
-        # Se não encontrou padrão, assume que é o produto sem quantidade
-        if not produto_encontrado:
-            produto_encontrado = parte.strip()
-            quantidade_encontrada = 1
-            print(f" Sem padrão, assumindo: '{produto_encontrado}' - Qtd: {quantidade_encontrada}")
-        
-        # Limpa o nome do produto
         if produto_encontrado:
-            # Remove palavras desnecessárias
-            produto_limpo = re.sub(
-                r'\b(quero|preciso|gostaria|precisaria|de|das|dos|unidades|pcs|peças|itens|unidade|pc|peça|item)\b',
-                '',
-                produto_encontrado,
-                flags=re.IGNORECASE
-            ).strip()
-            
-            # Remove números no início ou fim
-            produto_limpo = re.sub(r'^\d+\s+|\s+\d+$', '', produto_limpo).strip()
+            produto_limpo = produto_encontrado
+            produto_limpo = re.sub(r'^(quero|preciso|gostaria|precisaria|um|uma|de|das|dos|as|os)\s+', '', produto_limpo, flags=re.IGNORECASE)
+            produto_limpo = re.sub(r'\s+(unidades|unidade|pcs|pc|peças|peça|itens|item)$', '', produto_limpo, flags=re.IGNORECASE)
+            produto_limpo = re.sub(r'\b\d+\b', '', produto_limpo)
+            produto_limpo = re.sub(r'\s+', ' ', produto_limpo).strip()
             
             if produto_limpo:
-                print(f" Buscando produto: '{produto_limpo}'")
-                
-                # Busca o produto no Excel
+                print(f"      🔍 Buscando: '{produto_limpo}' (Qtd: {quantidade_encontrada})")
                 produtos_encontrados = buscar_produtos_por_nome(produto_limpo)
                 
                 if produtos_encontrados:
-                    produto = produtos_encontrados[0]  # Pega o primeiro encontrado
-                    
-                    # Verifica se já não foi adicionado
-                    ja_existe = False
-                    for p in produtos_extraidos:
-                        if p['name'].lower() == produto.descricao.lower():
-                            # Atualiza quantidade se já existe
-                            p['quantity'] += quantidade_encontrada
-                            ja_existe = True
-                            print(f" Produto atualizado: {produto.descricao} - Nova Qtd: {p['quantity']}")
+                    produto = produtos_encontrados[0]
+                    duplicata = False
+                    for existente in produtos_extraidos:
+                        if existente['name'].lower() == produto.descricao.lower():
+                            existente['quantity'] += quantidade_encontrada
+                            duplicata = True
+                            print(f"      🔄 Produto duplicado! Nova quantidade: {existente['quantity']}")
                             break
                     
-                    if not ja_existe:
+                    if not duplicata:
                         produtos_extraidos.append({
                             'name': produto.descricao,
                             'quantity': quantidade_encontrada,
                             'price': float(produto.valor) if produto.valor else 0,
                             'dimensions': produto.dimensao
                         })
-                        print(f" Produto adicionado: {produto.descricao} - Qtd: {quantidade_encontrada}")
+                        print(f"      ✅ Produto adicionado: {produto.descricao}")
                 else:
-                    print(f" Produto não encontrado: '{produto_limpo}'")
+                    print(f"      ❌ Produto não encontrado: '{produto_limpo}'")
+            else:
+                print(f"      ⚠️ Produto vazio após limpeza")
+        else:
+            print(f"      ❌ Nenhum padrão reconhecido para: '{parte}'")
     
-    print(f" Total de produtos extraídos: {len(produtos_extraidos)}")
+    print(f"\n RESUMO DA EXTRAÇÃO MANUAL:")
+    print(f"   Total de produtos: {len(produtos_extraidos)}")
+    for p in produtos_extraidos:
+        subtotal = p['price'] * p['quantity']
+        print(f"   - {p['name']} x{p['quantity']} = R$ {subtotal:.2f}")
+    
     return produtos_extraidos
 
 def extrair_produtos_da_mensagem(mensagem):
     """Usa GLM para extrair múltiplos produtos e quantidades de uma mensagem"""
     if not client:
-        # Fallback sem GLM - extração manual
         print(" GLM não disponível, usando extração manual")
         return extrair_produtos_manualmente(mensagem)
     
@@ -360,7 +343,6 @@ def extrair_produtos_da_mensagem(mensagem):
         
         produtos = df[colunas['descricao']].dropna().astype(str).tolist()
         
-        # Prompt melhorado para múltiplos produtos
         prompt_sistema = f"""Você é um especialista em extrair informações de orçamentos. Analise a mensagem e extraia TODOS os produtos mencionados.
 
 PRODUTOS DISPONÍVEIS:
@@ -408,7 +390,6 @@ Resposta:"""
                 if 'products' in resultado and resultado['products']:
                     produtos_extraidos = []
                     for item in resultado['products']:
-                        # Buscar cada produto no Excel
                         produtos_encontrados = buscar_produtos_por_nome(item['name'])
                         if produtos_encontrados:
                             produto = produtos_encontrados[0]
@@ -427,7 +408,6 @@ Resposta:"""
         except json.JSONDecodeError as e:
             print(f" Erro JSON GLM: {e}")
         
-        # Fallback para extração manual
         print(" Usando fallback manual para múltiplos produtos")
         return extrair_produtos_manualmente(mensagem)
         
@@ -438,7 +418,6 @@ Resposta:"""
 def processar_intencao_com_glm(mensagem, session_id=None):
     """Usa a API GLM para identificar a intenção, produto e quantidade"""
     if not client:
-        # Fallback sem GLM
         quantidade = extrair_quantidade_da_mensagem(mensagem)
         return {"intent": "fazer_orcamento", "produto": mensagem, "quantidade": quantidade}
     
@@ -460,7 +439,6 @@ def processar_intencao_com_glm(mensagem, session_id=None):
             if conversa.estado == ESTADOS['DIMENSAO_SOLICITADA']:
                 return {"intent": "fornecer_dimensao", "dimensao": mensagem}
         
-        # Prompt simplificado mas mais eficaz
         prompt_sistema = f"""Extraia o produto e a quantidade da mensagem.
 
 PRODUTOS DISPONÍVEIS:
@@ -489,23 +467,20 @@ JSON:"""
         resposta_texto = response.choices[0].message.content.strip()
         print(f" Resposta GLM bruta: {resposta_texto}")
         
-        # Tentativa 1: JSON completo
         try:
             json_match = re.search(r'\{.*\}', resposta_texto, re.DOTALL)
             if json_match:
                 resultado = json.loads(json_match.group())
                 
-                # Processa quantidade
                 if 'quantidade' in resultado:
                     quantidade = resultado['quantidade']
                     if isinstance(quantidade, str):
-                        # Extrai números da string
                         nums = re.findall(r'\d+', quantidade)
                         quantidade = int(nums[0]) if nums else 1
                     else:
                         quantidade = int(quantidade)
                     
-                    quantidade = max(1, quantidade)  # Garante mínimo 1
+                    quantidade = max(1, quantidade)
                     resultado['quantidade'] = quantidade
                     
                     print(f" GLM funcionou - Produto: {resultado.get('produto')}, Qtd: {quantidade}")
@@ -513,7 +488,6 @@ JSON:"""
         except Exception as e:
             print(f" Erro no JSON do GLM: {e}")
         
-        # Fallback: extração manual
         print(" Usando fallback de extração manual")
         quantidade_fallback = extrair_quantidade_da_mensagem(mensagem)
         print(f" Quantidade extraída manualmente: {quantidade_fallback}")
@@ -529,8 +503,6 @@ JSON:"""
         quantidade = extrair_quantidade_da_mensagem(mensagem)
         return {"intent": "fazer_orcamento", "produto": mensagem, "quantidade": quantidade}
 
-
-
 def gerar_tabela_resumo(conversa):
     """Gera uma tabela formatada com o resumo do orçamento"""
     if not conversa.produto_selecionado:
@@ -539,38 +511,21 @@ def gerar_tabela_resumo(conversa):
     produto = conversa.produto_selecionado
     quantidade = conversa.quantidade
     
-    # Debug forçado
-    print(f" DEBUG - gerar_tabela_resumo:")
-    print(f"   Produto: {produto.descricao}")
-    print(f"   Quantidade (conversa): {quantidade} (tipo: {type(quantidade)})")
-    print(f"   Valor (produto): {produto.valor} (tipo: {type(produto.valor)})")
-    
-    # Garante que quantidade seja inteiro
     try:
         quantidade = int(quantidade)
     except (ValueError, TypeError):
         quantidade = 1
-        print(f" Quantidade inválida, usando 1")
     
-    # Garante que valor seja float
     try:
         valor_unitario = float(produto.valor) if produto.valor else 0
     except (ValueError, TypeError):
         valor_unitario = 0
-        print(f" Valor inválido, usando 0")
     
-    # Cálculo do valor total
     valor_total = valor_unitario * quantidade
     
-    print(f"   Valor unitário (convertido): {valor_unitario}")
-    print(f"   Quantidade (convertida): {quantidade}")
-    print(f"   Valor total calculado: {valor_total}")
-    
-    # Formatação
     valor_unitario_str = f"R$ {valor_unitario:.2f}"
     valor_total_str = f"R$ {valor_total:.2f}"
     
-    # Tabela detalhada
     tabela = f""" *Resumo do Orçamento:*
 
 | Qtd | Produto | Vl. Unitário | Vl. Total |
@@ -583,7 +538,6 @@ def gerar_tabela_resumo(conversa):
 📄 PDF disponível para download abaixo"""
     
     return tabela
-
 
 def gerar_tabela_multiplos_produtos(produtos_quantidades):
     """Gera tabela formatada para múltiplos produtos"""
@@ -623,248 +577,220 @@ def gerar_resposta_multiplas_opcoes(produtos):
     resposta += " *Digite o número da opção desejada para continuar.*"
     return resposta
 
-def draw_page_elements(canvas, doc, nome_cliente):
-    """Desenha elementos fixos (cabeçalho e número da página) em cada página."""
-    canvas.saveState()
-    width, height = letter
-    
-    global COR_CINZA_CLARO, COR_TEXTO, LOGO_PATH
-    
-    canvas.setFillColor(COR_CINZA_CLARO)
-    canvas.rect(0, height - 60, width, 60, fill=True, stroke=False)
-    
+def gerar_pdf(produtos, nome_cliente="Orçamento", quantidade=1):
+    """Gera um PDF profissional com os produtos e quantidade"""
     try:
-        canvas.drawImage(LOGO_PATH, inch, height - 50, width=1.5 * inch, height=0.5 * inch, mask='auto')
-    except Exception as e:
-        canvas.setFillColor(black)
-        canvas.setFont("Helvetica-Bold", 16)
-        canvas.drawString(inch, height - 35, "BOA VISTA")
+        print(f"📄 Iniciando geração de PDF para {len(produtos)} produto(s)")
+        print(f"   Quantidade: {quantidade}")
+        print(f"   Produtos: {[p.descricao for p in produtos]}")
+        
+        buffer = io.BytesIO()
+        p = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
 
-    canvas.setFillColor(black)
-    canvas.setFont("Helvetica", 10)
-    canvas.drawString(width - inch - 150, height - 35, "Orçamento") 
-    canvas.drawString(width - inch - 150, height - 50, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}") 
+        cor_primaria = HexColor('#2E86AB')
+        cor_secundaria = HexColor('#A23B72')
+        cor_texto = HexColor('#333333')
 
-    canvas.setStrokeColor(black)
-    canvas.setLineWidth(0.5)
-    canvas.line(inch, height - 70, width - inch, height - 70) 
+        # Cabeçalho
+        p.setFillColor(cor_primaria)
+        p.rect(0, height - 100, width, 100, fill=True, stroke=False)
+        
+        p.setFillColorRGB(1, 1, 1)
+        p.setFont("Helvetica-Bold", 20)
+        p.drawString(inch, height - 1.5 * inch, "ORÇAMENTO")
+        
+        p.setFont("Helvetica", 12)
+        p.drawString(inch, height - 1.8 * inch, f"Data: {datetime.now().strftime('%d/%m/%Y')}")
+        p.drawString(inch, height - 2 * inch, f"Cliente: {nome_cliente}")
 
-    canvas.setFillColor(COR_TEXTO)
-    canvas.setFont("Helvetica-Bold", 10)
-    canvas.drawString(inch, height - 85, "Dados do cliente:")
-    canvas.setFont("Helvetica", 10)
-    canvas.drawString(inch, height - 100, f"Nome: {nome_cliente}")
-    canvas.drawString(inch, height - 115, "E-mail: boavista@gmail.com (Exemplo)") 
+        # Título da tabela
+        p.setFillColor(cor_secundaria)
+        p.rect(0, height - 250, width, 40, fill=True, stroke=False)
+        
+        p.setFillColorRGB(1, 1, 1)
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(inch, height - 2.7 * inch, "Qtd")
+        p.drawString(1.5 * inch, height - 2.7 * inch, "Produto")
+        p.drawString(4 * inch, height - 2.7 * inch, "Dimensões")
+        p.drawString(5.5 * inch, height - 2.7 * inch, "Vl. Unit.")
+        p.drawString(6.5 * inch, height - 2.7 * inch, "Vl. Total")
 
-    canvas.setFillColor(black)
-    canvas.setFont("Helvetica", 9)
-    page_number_text = f"Página {canvas.getPageNumber()}"
-    canvas.drawString(width - inch - canvas.stringWidth(page_number_text, "Helvetica", 9), 30, page_number_text) 
-
-    canvas.restoreState()
-
-class PDFGenerator:
-    """Centraliza a lógica de criação e formatação do PDF."""
-    
-    def __init__(self, nome_cliente="Orçamento"):
-        self.nome_cliente = nome_cliente
-        
-        self.styles = getSampleStyleSheet()
-        
-        normal_style = self.styles.get('Normal', ParagraphStyle(name='Normal'))
-        
-        
-        self.styles.add(ParagraphStyle(name='Bold', 
-                                       parent=normal_style, 
-                                       fontName='Helvetica-Bold', 
-                                       fontSize=12))
-                                       
-        self.styles.add(ParagraphStyle(name='TabelaHeader', 
-                                       parent=normal_style,
-                                       fontName='Helvetica-Bold', 
-                                       fontSize=10, 
-                                       textColor=white))
-                                       
-        self.styles.add(ParagraphStyle(name='TabelaContent', 
-                                       parent=normal_style,
-                                       fontName='Helvetica', 
-                                       fontSize=9, 
-                                       textColor=COR_TEXTO))
-                                       
-        self.styles.add(ParagraphStyle(name='Small', 
-                                       parent=normal_style,
-                                       fontName='Helvetica', 
-                                       fontSize=8, 
-                                       textColor=black))
-
-        
-    def get_table_style(self, total_rows):
-        """Define o estilo da tabela principal."""
-        return TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), COR_SEGUNDARIA),
-            ('TEXTCOLOR', (0, 0), (-1, 0), white),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTNAME', (0, 1), (-1, total_rows), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, total_rows), 9),
-            ('GRID', (0, 0), (-1, -1), 0.25, black),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ])
-
-    def build_final_footer(self, valor_total_geral):
-        """Cria os Flowables (elementos de conteúdo) para o rodapé final - Aparece APENAS na última página."""
-        story = []
-        
-        story.append(Spacer(1, 0.5 * inch))
-        
-        total_data = [
-            [
-                Paragraph("Total final:", self.styles['Normal']), 
-                Paragraph(f"R$ {valor_total_geral:.2f}", self.styles['Bold']) 
-            ]
-        ]
-        
-        total_table_style = TableStyle([
-            ('ALIGN', (0, 0), (0, 0), 'RIGHT'),
-            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 12),
-            ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-            ('LINEBELOW', (0, 0), (-1, 0), 1, black),
-        ])
-        
-        total_table = Table(total_data, colWidths=[5.5 * inch, 1.5 * inch])
-        total_table.setStyle(total_table_style)
-        story.append(total_table)
-        
-        story.append(Spacer(1, 0.2 * inch))
-
-        rodape_promob = [
-            [
-                Paragraph(f"TABELA DE PREÇOS: BOA VISTA - TABELA LOJAS OFICIAL {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", self.styles['Small']), 
-            ],
-            [
-                Paragraph("Razão social: Boa Vista | Endereço: | Telefone: (85) 9-9615-0458", self.styles['Normal']),
-            ],
-            [
-                Paragraph("©Boa Vista. Todos os direitos reservados.", self.styles['Small']),
-            ]
-        ]
-        
-        rodape_table_style = TableStyle([
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica'),
-            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-            ('TOPPADDING', (0, 0), (-1, -1), 3),
-            ('FONTSIZE', (0, 0), (-1, -1), 8),
-        ])
-        
-        rodape_table = Table(rodape_promob, colWidths=[7 * inch])
-        rodape_table.setStyle(rodape_table_style)
-        story.append(rodape_table)
-        
-        return story
-
-    def build_story(self, produtos_info):
-        """Cria o conteúdo (Story) do PDF que flui pelas páginas."""
-        story = []
-        
-        story.append(Spacer(1, 1.2 * inch)) 
-        
-        story.append(Paragraph("PROJETO - COZINHA - COZINHA - ACESSÓRIOS", self.styles['Bold']))
-        story.append(Spacer(1, 0.1 * inch))
-
-        data = [
-            [
-                Paragraph("Qtd", self.styles['TabelaHeader']),
-                Paragraph("Produto", self.styles['TabelaHeader']),
-                Paragraph("Dimensões", self.styles['TabelaHeader']),
-                Paragraph("Vl. Unit.", self.styles['TabelaHeader']),
-                Paragraph("Vl. Total", self.styles['TabelaHeader'])
-            ]
-        ]
+        # Itens
+        p.setFillColor(cor_texto)
+        p.setFont("Helvetica", 10)
+        y_position = height - 3.2 * inch
         
         valor_total_geral = 0
         
-        for produto, quantidade in produtos_info:
-            try:
-                valor_unitario = float(produto.valor) if produto.valor else 0
-            except ValueError:
-                valor_unitario = 0
+        for produto in produtos:
+            # CONVERTENDO TODOS OS VALORES PARA STRING ANTES DE USAR
+            qtd_str = str(quantidade)
+            p.drawString(inch, y_position, qtd_str)
             
-            valor_total = valor_unitario * int(quantidade)
+            descricao = str(produto.descricao)  # Garantindo que é string
+            if len(descricao) > 30:
+                descricao = descricao[:27] + "..."
+            p.drawString(1.5 * inch, y_position, descricao)
+            
+            # Convertendo dimensão para string
+            dimensao = str(produto.dimensao) if produto.dimensao else "N/A"
+            p.drawString(4 * inch, y_position, dimensao)
+            
+            # Convertendo valores para string
+            valor_unitario = float(produto.valor) if produto.valor else 0
+            valor_unitario_str = f"R$ {valor_unitario:.2f}"
+            p.drawString(5.5 * inch, y_position, valor_unitario_str)
+            
+            valor_total = valor_unitario * quantidade
+            valor_total_str = f"R$ {valor_total:.2f}"
+            p.drawString(6.5 * inch, y_position, valor_total_str)
+            
             valor_total_geral += valor_total
-            
-            descricao = str(produto.descricao)
-            if len(descricao) > 40:
-                descricao = descricao[:37] + "..."
-                
-            data.append([
-                Paragraph(str(quantidade), self.styles['TabelaContent']),
-                Paragraph(descricao, self.styles['TabelaContent']),
-                Paragraph(produto.dimensao if produto.dimensao else "N/A", self.styles['TabelaContent']),
-                Paragraph(f"R$ {valor_unitario:.2f}", self.styles['TabelaContent']),
-                Paragraph(f"R$ {valor_total:.2f}", self.styles['TabelaContent'])
-            ])
+            y_position -= 0.4 * inch
 
-        col_widths = [0.5 * inch, 2.5 * inch, 1.5 * inch, 1 * inch, 1 * inch]
-        
-        t = Table(data, colWidths=col_widths)
-        t.setStyle(self.get_table_style(len(data) - 1))
-        story.append(t)
-        
-        final_footer = self.build_final_footer(valor_total_geral)
-        story.extend(final_footer)
-        
-        return story
+        # Total geral - CONVERTENDO PARA STRING
+        p.setFillColor(cor_secundaria)
+        p.rect(0, y_position - 20, width, 30, fill=True, stroke=False)
+        p.setFillColorRGB(1, 1, 1)
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(5.5 * inch, y_position - 10, "TOTAL:")
+        p.drawString(6.5 * inch, y_position - 10, f"R$ {valor_total_geral:.2f}")
 
-    def generate(self, produtos_info):
-        """Gera o buffer do PDF."""
-        buffer = io.BytesIO()
+        # Rodapé
+        p.setFillColor(cor_primaria)
+        p.rect(0, 50, width, 50, fill=True, stroke=False)
         
-        doc = SimpleDocTemplate(
-            buffer, 
-            pagesize=letter,
-            topMargin=inch * 1.5,
-            bottomMargin=inch * 1.5,
-        )
-        
-        story = self.build_story(produtos_info)
-        
-        def on_each_page(canvas, doc):
-            draw_page_elements(canvas, doc, self.nome_cliente) 
-            
-        doc.build(story, onFirstPage=on_each_page, onLaterPages=on_each_page)
-        
+        p.setFillColorRGB(1, 1, 1)
+        p.setFont("Helvetica", 10)
+        p.drawString(inch, 70, "Este orçamento é válido por 30 dias.")
+        p.drawString(inch, 55, "Para dúvidas, entre em contato: orcamento@empresa.com")
+
+        p.save()
         buffer.seek(0)
+        
+        # Verificar o que estamos retornando
+        pdf_content = buffer.getvalue()
+        print(f"📄 PDF gerado - Tamanho: {len(pdf_content)} bytes")
+        print(f"   Tipo do buffer: {type(buffer)}")
+        print(f"   Tipo do conteúdo: {type(pdf_content)}")
+        
+        if isinstance(pdf_content, int):
+            print("⚠️ ATENÇÃO: getvalue() retornou um inteiro!")
+            # Criar um buffer vazio se houver problema
+            buffer = io.BytesIO()
+            buffer.write(b'PDF Error')
+            buffer.seek(0)
+            return buffer
+        
         return buffer
-
-def gerar_pdf(produtos, nome_cliente="Orçamento", quantidade=1):
-    """Gera um PDF profissional para um único produto (Wrapper)"""
-    try:
-        produtos_info = [(produtos[0], quantidade)] if produtos else []
-        pdf_generator = PDFGenerator(nome_cliente=nome_cliente)
-        return pdf_generator.generate(produtos_info)
     except Exception as e:
-        print(f" Erro ao gerar PDF (single): {e}") 
+        print(f"❌ Erro ao gerar PDF: {e}")
+        import traceback
+        traceback.print_exc()
         return None
-
 
 def gerar_pdf_multiplos(produtos_quantidades, nome_cliente="Orçamento"):
-    """Gera PDF para múltiplos produtos (Wrapper)"""
+    """Gera PDF para múltiplos produtos"""
     try:
-        pdf_generator = PDFGenerator(nome_cliente=nome_cliente)
-        return pdf_generator.generate(produtos_quantidades)
+        print(f"📄 Iniciando geração de PDF múltiplo para {len(produtos_quantidades)} item(s)")
+        
+        buffer = io.BytesIO()
+        p = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+
+        cor_primaria = HexColor('#2E86AB')
+        cor_secundaria = HexColor('#A23B72')
+        cor_texto = HexColor('#333333')
+
+        # Cabeçalho
+        p.setFillColor(cor_primaria)
+        p.rect(0, height - 100, width, 100, fill=True, stroke=False)
+        
+        p.setFillColorRGB(1, 1, 1)
+        p.setFont("Helvetica-Bold", 20)
+        p.drawString(inch, height - 1.5 * inch, "ORÇAMENTO MÚLTIPLO")
+        
+        p.setFont("Helvetica", 12)
+        p.drawString(inch, height - 1.8 * inch, f"Data: {datetime.now().strftime('%d/%m/%Y')}")
+        p.drawString(inch, height - 2 * inch, f"Cliente: {nome_cliente}")
+
+        # Título da tabela
+        p.setFillColor(cor_secundaria)
+        p.rect(0, height - 250, width, 40, fill=True, stroke=False)
+        
+        p.setFillColorRGB(1, 1, 1)
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(inch, height - 2.7 * inch, "Qtd")
+        p.drawString(1.5 * inch, height - 2.7 * inch, "Produto")
+        p.drawString(4 * inch, height - 2.7 * inch, "Dimensões")
+        p.drawString(5.5 * inch, height - 2.7 * inch, "Vl. Unit.")
+        p.drawString(6.5 * inch, height - 2.7 * inch, "Vl. Total")
+
+        # Itens
+        p.setFillColor(cor_texto)
+        p.setFont("Helvetica", 10)
+        y_position = height - 3.2 * inch
+        
+        valor_total_geral = 0
+        
+        for produto, quantidade in produtos_quantidades:
+            # CONVERTENDO PARA STRING
+            qtd_str = str(quantidade)
+            p.drawString(inch, y_position, qtd_str)
+            
+            descricao = str(produto.descricao)
+            if len(descricao) > 30:
+                descricao = descricao[:27] + "..."
+            p.drawString(1.5 * inch, y_position, descricao)
+            
+            dimensao = str(produto.dimensao) if produto.dimensao else "N/A"
+            p.drawString(4 * inch, y_position, dimensao)
+            
+            valor_unitario = float(produto.valor) if produto.valor else 0
+            valor_unitario_str = f"R$ {valor_unitario:.2f}"
+            p.drawString(5.5 * inch, y_position, valor_unitario_str)
+            
+            valor_total = valor_unitario * quantidade
+            valor_total_str = f"R$ {valor_total:.2f}"
+            p.drawString(6.5 * inch, y_position, valor_total_str)
+            
+            valor_total_geral += valor_total
+            y_position -= 0.4 * inch
+
+        # Total geral
+        p.setFillColor(cor_secundaria)
+        p.rect(0, y_position - 20, width, 30, fill=True, stroke=False)
+        p.setFillColorRGB(1, 1, 1)
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(5.5 * inch, y_position - 10, "TOTAL:")
+        p.drawString(6.5 * inch, y_position - 10, f"R$ {valor_total_geral:.2f}")
+
+        # Rodapé
+        p.setFillColor(cor_primaria)
+        p.rect(0, 50, width, 50, fill=True, stroke=False)
+        
+        p.setFillColorRGB(1, 1, 1)
+        p.setFont("Helvetica", 10)
+        p.drawString(inch, 70, "Este orçamento é válido por 30 dias.")
+        p.drawString(inch, 55, "Para dúvidas, entre em contato: orcamento@empresa.com")
+
+        p.save()
+        buffer.seek(0)
+        
+        # Verificação
+        pdf_content = buffer.getvalue()
+        print(f"📄 PDF múltiplo gerado - Tamanho: {len(pdf_content)} bytes")
+        
+        return buffer
     except Exception as e:
-        print(f" Erro ao gerar PDF (múltiplo): {e}")
+        print(f"❌ Erro ao gerar PDF múltiplo: {e}")
+        import traceback
+        traceback.print_exc()
         return None
+
 def extrair_quantidade_da_mensagem(mensagem):
     """Extrai quantidade da mensagem usando múltiplos métodos"""
-    
-    # Método 1: Números explícitos
     numeros = re.findall(r'\b(\d+)\b', mensagem)
     if numeros:
         try:
@@ -872,7 +798,6 @@ def extrair_quantidade_da_mensagem(mensagem):
         except ValueError:
             pass
     
-    # Método 2: Números por extenso
     numeros_por_extenso = {
         'zero': 0, 'um': 1, 'uma': 1, 'dois': 2, 'duas': 2, 'três': 3, 'tres': 3,
         'quatro': 4, 'cinco': 5, 'seis': 6, 'sete': 7, 'oito': 8, 'nove': 9, 'dez': 10,
@@ -885,7 +810,6 @@ def extrair_quantidade_da_mensagem(mensagem):
         if f' {palavra} ' in f' {mensagem_lower} ' or mensagem_lower.startswith(palavra + ' ') or mensagem_lower.endswith(' ' + palavra):
             return numero
     
-    # Método 3:
     padroes = [
         r'(\d+)\s+(?:unidades?|pcs?|peças?|itens?)',
         r'(?:quero|preciso|gostaria|precisaria)\s+(\d+)',
@@ -902,6 +826,52 @@ def extrair_quantidade_da_mensagem(mensagem):
     
     return 1  
 
+def detectar_multiplos_produtos(mensagem):
+    """Versão super sensível para detectar múltiplos produtos"""
+    print(f"🔍 Analisando mensagem para múltiplos produtos: '{mensagem}'")
+    mensagem_lower = mensagem.lower()
+    
+    indicadores = [
+        (r',', 10, 'Vírgula'),
+        (r'\b\s+e\s+\b', 10, 'Conjunção "e"'),
+        (r'\b\s+e\s+mais\s+\b', 8, '"e mais"'),
+        (r'\b\s+também\s+\b', 8, '"também"'),
+        (r'\b\s+além\s+de\s+\b', 8, '"além de"'),
+        (r'\b\d+.*\d+\b', 5, 'Dois ou mais números'),
+        (r'\b(\d+).*\b(e|,)\s.*\b(\d+)\b', 7, 'Número + conector + número'),
+        (r'\b\s+mais\s+\b', 3, '"mais" sozinho'),
+        (r'\b\s+com\s+\b', 3, '"com"'),
+        (r'\b\s+adicional\s+\b', 3, '"adicional"'),
+    ]
+    
+    pontuacao_total = 0
+    indicadores_encontrados = []
+    
+    for padrao, peso, descricao in indicadores:
+        if re.search(padrao, mensagem_lower):
+            pontuacao_total += peso
+            indicadores_encontrados.append(f"{descricao} (peso {peso})")
+            print(f"   ✅ Encontrado: {descricao} (peso {peso})")
+    
+    padroes_produto = [
+        r'\b\d+\s+\w+.*,\s*\d+\s+\w+',
+        r'\b\d+\s+\w+.*\s+e\s+\d+\s+\w+',
+        r'\b\w+.*\d+.*,\s*\w+.*\d+',
+    ]
+    
+    for padrao in padroes_produto:
+        if re.search(padrao, mensagem_lower):
+            pontuacao_total += 15
+            indicadores_encontrados.append(f"Padrão completo (peso 15)")
+            print(f"   🎯 Padrão completo encontrado! (peso 15)")
+    
+    limiar = 5
+    resultado = pontuacao_total >= limiar
+    print(f"   📊 Pontuação total: {pontuacao_total} (limiar: {limiar})")
+    print(f"   📋 Indicadores: {indicadores_encontrados}")
+    print(f"   🎯 Resultado: {'MÚLTIPLOS PRODUTOS' if resultado else 'PRODUTO ÚNICO'}")
+    
+    return resultado
 
 # --- ENDPOINTS DA API ---
 @app.route('/')
@@ -959,42 +929,6 @@ def chat():
         
         conversa = conversas[session_id]
         
-        
-        if mode == 'multiple' and user_message == 'generate_multiple_quote' and products_data:
-            conversa.reiniciar()
-            
-            
-            produtos_orcamento = []
-            for item in products_data:
-                produto = Produto(
-                    descricao=item['name'],
-                    dimensao=item.get('dimensions'),
-                    valor=item['price']
-                )
-                produtos_orcamento.append((produto, item['quantity']))
-            
-            
-            response_text = gerar_tabela_multiplos_produtos(produtos_orcamento)
-            
-            # PDF
-            pdf_buffer = gerar_pdf_multiplos(produtos_orcamento, nome_cliente=f"Cliente {session_id}")
-            if pdf_buffer:
-                pdf_path = f"orcamento_temp_{session_id}.pdf"
-                with open(pdf_path, "wb") as f:
-                    f.write(pdf_buffer.getvalue())
-                
-                return jsonify({
-                    "response": response_text, 
-                    "pdf_url": f"/download/pdf/{session_id}",
-                    "session_id": session_id
-                })
-            else:
-                return jsonify({
-                    "response": response_text,
-                    "pdf_url": None,
-                    "session_id": session_id
-                })
-        
         # Verificar se está esperando escolha de produto
         if conversa.estado == ESTADOS['MULTIPLAS_OPCOES']:
             if user_message.isdigit():
@@ -1003,13 +937,12 @@ def chat():
                     conversa.produto_selecionado = conversa.produtos_encontrados[opcao - 1]
                     conversa.estado = ESTADOS['PRODUTO_SELECIONADO']
                     
-                    # Verificar se precisa de dimensões
                     if not conversa.produto_selecionado.dimensao:
                         conversa.estado = ESTADOS['DIMENSAO_SOLICITADA']
                         response_text = f" *Produto selecionado:* {conversa.produto_selecionado.descricao}\n\n🔍 *Por favor, informe as dimensões desejadas:*"
                         return jsonify({"response": response_text, "pdf_url": None, "session_id": session_id})
                     else:
-                        # Tem dimensão, pode finalizar
+                        # Tem dimensão, pode finalizar DIRETAMENTE
                         conversa.estado = ESTADOS['ORCAMENTO_FINALIZADO']
                         tabela_resumo = gerar_tabela_resumo(conversa)
                         response_text = f"{tabela_resumo}\n\n PDF disponível para download abaixo"
@@ -1032,8 +965,8 @@ def chat():
         if conversa.estado == ESTADOS['DIMENSAO_SOLICITADA']:
             conversa.dimensao_selecionada = user_message
             conversa.produto_selecionado.dimensao = user_message
+            # Finaliza DIRETAMENTE
             conversa.estado = ESTADOS['ORCAMENTO_FINALIZADO']
-            
             tabela_resumo = gerar_tabela_resumo(conversa)
             response_text = f"{tabela_resumo}\n\n PDF disponível para download abaixo"
             
@@ -1052,16 +985,12 @@ def chat():
         intent_data = processar_intencao_com_glm(user_message, session_id)
         intent = intent_data.get("intent", "fazer_orcamento")
         
-       
-     
-
         if intent == "fazer_orcamento":
             conversa.reiniciar()
     
             produto_busca = intent_data.get("produto", user_message)
             quantidade_extraida = intent_data.get("quantidade", 1)
         
-            
             print(f" PROCESSANDO ORÇAMENTO:")
             print(f"   Mensagem original: {user_message}")
             print(f"   Produto extraído: {produto_busca}")
@@ -1098,18 +1027,42 @@ def chat():
                 response_text = f" *Produto encontrado:* {conversa.produto_selecionado.descricao}\n\n🔍 *Por favor, informe as dimensões desejadas:*"
                 return jsonify({"response": response_text, "pdf_url": None, "session_id": session_id})
             else:
-                # Tem dimensão, pode finalizar
+                # Tem dimensão, pode finalizar DIRETAMENTE
                 conversa.estado = ESTADOS['ORCAMENTO_FINALIZADO']
-                
-                # Debug antes de gerar tabela
-                print(f" Antes de gerar tabela:")
-                print(f"   Quantidade na conversa: {conversa.quantidade}")
-                print(f"   Valor no produto: {conversa.produto_selecionado.valor}")
-                
                 tabela_resumo = gerar_tabela_resumo(conversa)
                 response_text = f"{tabela_resumo}\n\n PDF disponível para download abaixo"
         
-            pdf_buffer = gerar_pdf([conversa.produto_selecionado], nome_cliente=f"Cliente {session_id}", quantidade=conversa.quantidade)
+                pdf_buffer = gerar_pdf([conversa.produto_selecionado], nome_cliente=f"Cliente {session_id}", quantidade=conversa.quantidade)
+                if pdf_buffer:
+                    pdf_path = f"orcamento_temp_{session_id}.pdf"
+                    with open(pdf_path, "wb") as f:
+                        f.write(pdf_buffer.getvalue())
+                    return jsonify({
+                        "response": response_text, 
+                        "pdf_url": f"/download/pdf/{session_id}",
+                        "session_id": session_id
+                    })
+        
+        # Modo múltiplos produtos (GERA DIRETAMENTE)
+        if mode == 'multiple' and user_message == 'generate_multiple_quote' and products_data:
+            conversa.reiniciar()
+            
+            if not products_data or len(products_data) == 0:
+                response_text = " *Nenhum produto selecionado.* Por favor, adicione produtos à lista antes de gerar o orçamento."
+                return jsonify({"response": response_text, "pdf_url": None, "session_id": session_id})
+
+            produtos_orcamento = []
+            for item in products_data:
+                produto = Produto(
+                    descricao=item['name'],
+                    dimensao=item.get('dimensions'),
+                    valor=item['price']
+                )
+                produtos_orcamento.append((produto, item['quantity']))
+            
+            response_text = gerar_tabela_multiplos_produtos(produtos_orcamento)
+            
+            pdf_buffer = gerar_pdf_multiplos(produtos_orcamento, nome_cliente=f"Cliente {session_id}")
             if pdf_buffer:
                 pdf_path = f"orcamento_temp_{session_id}.pdf"
                 with open(pdf_path, "wb") as f:
@@ -1118,14 +1071,21 @@ def chat():
                     "response": response_text, 
                     "pdf_url": f"/download/pdf/{session_id}",
                     "session_id": session_id
-                }) 
-                # Fallback
-                response_text = "Desculpe, não entendi. Você pode informar o nome do produto que deseja orçar?"
+                })
+            else:
                 return jsonify({
                     "response": response_text,
                     "pdf_url": None,
                     "session_id": session_id
                 })
+        
+        # Fallback
+        response_text = "Desculpe, não entendi. Você pode informar o nome do produto que deseja orçar?"
+        return jsonify({
+            "response": response_text,
+            "pdf_url": None,
+            "session_id": session_id
+        })
 
     except Exception as e:
         print(f" Erro no endpoint /chat: {e}")
@@ -1188,16 +1148,13 @@ def debug_busca():
         return jsonify({"error": "Termo de busca não fornecido"}), 400
     
     try:
-        # Buscar produtos
         produtos = buscar_produtos_por_nome(termo)
         produtos_dict = [p.to_dict() for p in produtos]
         
-        # Analisar falha se não encontrou
         analise = None
         if not produtos:
             analise = analisar_falha_busca(termo)
         
-        # Tentar processar com GLM
         glm_result = processar_intencao_com_glm(termo)
         
         return jsonify({
@@ -1238,11 +1195,9 @@ def testar_multiplicacao():
     data = request.get_json()
     message = data.get('message', '')
     
-    # Testa extração
     quantidade = extrair_quantidade_da_mensagem(message)
     intent_data = processar_intencao_com_glm(message)
     
-    # Testa busca
     produtos = buscar_produtos_por_nome(intent_data.get('produto', message))
     
     if produtos:
@@ -1261,6 +1216,107 @@ def testar_multiplicacao():
         })
     else:
         return jsonify({"error": "Produto não encontrado"})
+
+
+@app.route('/debug-completo', methods=['POST'])
+def debug_completo():
+    """Endpoint completo para debug de múltiplos produtos"""
+    data = request.get_json()
+    message = data.get('message', '')
+    
+    print("=" * 60)
+    print("🔍 DEBUG COMPLETO - INÍCIO")
+    print(f"📝 Mensagem original: '{message}'")
+    print("=" * 60)
+    
+    resultado = {
+        "mensagem_original": message,
+        "passos": []
+    }
+    
+    print("\n🔍 PASSO 1: Detecção de múltiplos produtos")
+    multiplos = detectar_multiplos_produtos(message)
+    resultado["passos"].append({
+        "passo": "Detecção de múltiplos",
+        "resultado": multiplos,
+        "detalhes": f"Múltiplos produtos: {multiplos}"
+    })
+    print(f"   Resultado: {multiplos}")
+    
+    print("\n🔧 PASSO 2: Extração manual")
+    produtos_manuais = extrair_produtos_manualmente(message)
+    resultado["passos"].append({
+        "passo": "Extração manual",
+        "resultado": produtos_manuais,
+        "quantidade": len(produtos_manuais)
+    })
+    print(f"   Produtos manuais: {len(produtos_manuais)}")
+    for p in produtos_manuais:
+        print(f"   - {p['name']} (Qtd: {p['quantity']})")
+    
+    if client:
+        print("\n🤖 PASSO 3: Extração com GLM")
+        try:
+            produtos_glm = extrair_produtos_da_mensagem(message)
+            resultado["passos"].append({
+                "passo": "Extração GLM",
+                "resultado": produtos_glm,
+                "quantidade": len(produtos_glm)
+            })
+            print(f"   Produtos GLM: {len(produtos_glm)}")
+            for p in produtos_glm:
+                print(f"   - {p['name']} (Qtd: {p['quantity']})")
+        except Exception as e:
+            print(f"   Erro GLM: {e}")
+            resultado["passos"].append({
+                "passo": "Extração GLM",
+                "erro": str(e)
+            })
+    else:
+        print("\n🤖 GLM não disponível")
+        resultado["passos"].append({
+            "passo": "Extração GLM",
+            "erro": "GLM não disponível"
+        })
+    
+    print("\n📊 PASSO 4: Análise da mensagem")
+    numeros = re.findall(r'\b\d+\b', message)
+    separadores = []
+    if ',' in message:
+        separadores.append('vírgula')
+    if ' e ' in message.lower():
+        separadores.append('conjunção "e"')
+    
+    resultado["passos"].append({
+        "passo": "Análise da mensagem",
+        "numeros_encontrados": numeros,
+        "separadores_encontrados": separadores,
+        "total_numeros": len(numeros)
+    })
+    
+    print(f"   Números: {numeros}")
+    print(f"   Separadores: {separadores}")
+    
+    print("\n💡 PASSO 5: Recomendação")
+    if len(produtos_manuais) > 1:
+        recomendacao = "Usar extração manual - funcionou bem!"
+        melhor_metodo = "manual"
+    elif len(produtos_manuais) == 1 and len(numeros) > 1:
+        recomendacao = "Detectei múltiplos números mas só um produto - revisar lógica"
+        melhor_metodo = "revisar"
+    else:
+        recomendacao = "Usar fluxo normal de produto único"
+        melhor_metodo = "unico"
+    
+    resultado["recomendacao"] = recomendacao
+    resultado["melhor_metodo"] = melhor_metodo
+    print(f"   Recomendação: {recomendacao}")
+    
+    print("=" * 60)
+    print("🔍 DEBUG COMPLETO - FIM")
+    print("=" * 60)
+    
+    return jsonify(resultado)
 
 
 if __name__ == '__main__':
