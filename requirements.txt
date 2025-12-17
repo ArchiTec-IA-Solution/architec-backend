@@ -1,0 +1,7 @@
+Flask==3.0.0
+flask-cors==4.0.0
+pandas==2.1.0
+reportlab==4.0.4
+python-dotenv==1.0.0
+openpyxl==3.1.2
+zhipuai  # Supondo que o 'zai' use isto, ou remove se 'zai.py' for local sem dep. externa
