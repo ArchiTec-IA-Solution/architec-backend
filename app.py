@@ -15,6 +15,7 @@ import json
 import re
 from datetime import datetime
 import uuid
+from dotenv import load_dotenv
 
 # --- CONFIGURAÇÃO ---
 load_dotenv()
@@ -1286,3 +1287,4 @@ if __name__ == '__main__':
     
 
     app.run(debug=True, port=5001, host='0.0.0.0')
+
