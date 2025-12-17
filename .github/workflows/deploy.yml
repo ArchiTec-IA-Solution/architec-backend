@@ -1,0 +1,58 @@
+name: Deploy to Elastic Beanstalk
+
+on:
+  push:
+    branches:
+      - main  # Confirme se a sua branch principal se chama "main" ou "master"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Preparar ficheiros para Deploy
+        run: |
+          # 1. Renomear o ficheiro principal (Exigência AWS)
+          if [ -f "app.py" ]; then
+            mv app.py application.py
+            echo "Renomeado app.py para application.py"
+          fi
+          
+          # 2. Verificar e tratar o ficheiro Excel/CSV
+          # Se existir o CSV mas não o XLSX, vamos avisar (o ideal é você subir o xlsx correto)
+          if [ ! -f "orca.xlsx" ]; then
+            echo "AVISO: orca.xlsx não encontrado! Verifique se converteu o ficheiro."
+            # Se tiver o CSV com o nome antigo, tenta renomear temporariamente para evitar erro, 
+            # mas o código Python pode falhar se não conseguir ler CSV.
+            if [ -f "orca.xlsx - Planilha1.csv" ]; then
+               echo "Encontrado CSV. Atenção: O código Python precisa ler Excel."
+            fi
+          fi
+
+          # 3. Criar o ZIP
+          # Incluímos o zai.py se ele existir no repositório
+          zip -r deploy.zip application.py requirements.txt orca.xlsx static templates .env
+          
+          # Adiciona zai.py se existir
+          if [ -f "zai.py" ]; then
+            zip -g deploy.zip zai.py
+          fi
+
+      - name: Deploy to EB
+        uses: einaregilsson/beanstalk-deploy@v21
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: OrcamentoApp      # NOME EXATO que criou na AWS
+          environment_name: OrcamentoApp-env  # NOME EXATO do ambiente (veja na consola AWS)
+          version_label: ${{ github.sha }}
+          region: us-east-2                   # Região Ohio (us-east-2)
+          deployment_package: deploy.zip
