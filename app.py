@@ -17,11 +17,12 @@ from datetime import datetime
 import uuid
 
 # --- CONFIGURAÇÃO ---
+load_dotenv()
 app = Flask(__name__)
+application = app
 CORS(app)
-EXCEL_FILE = r'C:\Users\a2016825\ML\Quio\architec-backend\orca.xlsx'
-GLM_API_KEY = "8bcf0c8788844f5083a78b457316f74e.RLXYMfd70rneG1Vq"
-LOGO_PATH = 'logoBoa.png'
+EXCEL_FILE = 'orca.xlsx'
+GLM_API_KEY = os.getenv("GLM_API_KEY")
 
 COR_CINZA_CLARO = HexColor('#F0F0F0') 
 COR_SEGUNDARIA = HexColor("#6B6A6A") 
@@ -1283,4 +1284,5 @@ if __name__ == '__main__':
     print("   http://localhost:5001/testar-busca/PRODUTO - Testar busca")
     print("   http://localhost:5001/debug/busca - Debug de busca (POST)")
     
+
     app.run(debug=True, port=5001, host='0.0.0.0')
