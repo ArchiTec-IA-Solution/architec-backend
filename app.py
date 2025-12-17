@@ -19,7 +19,7 @@ load_dotenv()
 app = Flask(__name__)
 application = app
 CORS(app)
-EXCEL_FILE = 'orca.xlsx'
+EXCEL_FILE = 'orcamento_final.xlsx'
 GLM_API_KEY = os.getenv("GLM_API_KEY")
 
 
@@ -661,3 +661,4 @@ if __name__ == '__main__':
     print("   http://localhost:5001/balcoes - Listar todos os balcões (API)")
     
     app.run(debug=True, port=5001, host='0.0.0.0')
+
