@@ -1131,7 +1131,10 @@ def chat():
 
     except Exception as e:
         print(f" Erro no endpoint /chat: {e}")
-        return jsonify({"error": "Ocorreu um erro interno no servidor."}), 500
+        return jsonify({
+            "response": "Não entendi sua solicitação. Poderia reformular?",
+            "session_id": session_id
+        }), 500
 
 @app.route('/download/pdf/<session_id>')
 def download_pdf(session_id):
@@ -1287,5 +1290,6 @@ if __name__ == '__main__':
     
 
     app.run(debug=True, port=5001, host='0.0.0.0')
+
 
 
