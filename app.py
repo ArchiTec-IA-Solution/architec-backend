@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_file, render_template, send_from_directory
 from flask_cors import CORS
-from zai import ZhipuAiClient
+#from zai import ZhipuAiClient
+from zhipuai import ZhipuAI
 import pandas as pd
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
@@ -17,6 +18,7 @@ from dotenv import load_dotenv
 # --- CONFIGURAÇÃO ---
 load_dotenv()
 app = Flask(__name__)
+application = app
 CORS(app)
 EXCEL_FILE = 'orca.xlsx'
 GLM_API_KEY = os.getenv("GLM_API_KEY")
@@ -1344,3 +1346,4 @@ if __name__ == '__main__':
     
 
     app.run(debug=True, port=5001, host='0.0.0.0')
+
